@@ -1,42 +1,26 @@
-# SolbergFinance — Cloud Sync Update
+# SolbergFinance — IB mode + deep-dive fix
 
-This version adds Supabase authentication and cloud sync to the Next.js/PWA app.
+This update is based on the working Supabase cloud-sync version.
 
-## Added
-- Email/password Supabase authentication
-- Cloud-synced tasks
-- Cloud-synced GMAT practice sessions
-- Cloud-synced GMAT mock scores
-- Cloud-synced saved finance stories
-- Automatic one-time migration of existing browser tasks/user-created stories
-- Existing Plan My Day, university assessment dashboard and PWA behaviour retained
+## Fixed
 
-## Required environment variables
-These should already exist in Vercel:
+### IB Interview Mode
+- Button now describes the action: **Mark interview complete** / **Resume IB prep**.
+- The preference is stored in Supabase Auth user metadata, so it follows the signed-in account across devices.
+- Marking the interview complete removes the auto-generated future/current `IB technical interview prep` task.
+- It removes IB blocks from today's generated timeline.
+- `Plan My Day` no longer inserts any IB blocks when interview mode is off.
+- IB blocks are now scheduled around classes instead of creating the previous 8:00 AM overlap.
+- The interview-mode control remains visible on mobile.
 
-NEXT_PUBLIC_SUPABASE_URL
-NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY
+### Finance-news Deep Dive
+- Deep Dive now opens a full-screen analysis panel instead of revealing one sentence.
+- It includes: What happened, IB significance, transaction/valuation/market mechanics, category-specific interview questions, source and source link.
+- Placeholder/template briefing cards are now clearly labelled as templates so they are not mistaken for live news.
 
-## Supabase tables
-This version uses the tables already created by `supabase/schema.sql`:
-- tasks
-- gmat_sessions
-- gmat_mocks
-- finance_stories
+## Important
 
-## Deployment
-Upload/commit these files to the root of GitHub repository `solbergfinance`.
-Vercel should automatically create a new deployment.
+This fixes the deep-dive experience, but automated live-news ingestion is still a separate backend step. The current starter cards are intentionally labelled **Template / Live feed pending**.
 
-## First login
-1. Open the newly deployed app.
-2. Choose "Need an account? Create one".
-3. Use your email and a new app password.
-4. If Supabase email confirmation is enabled, click the confirmation link in the email.
-5. Sign in on both Mac and iPhone with the same account.
-
-## Next development step
-- Sync daily plans/preferences
-- Add live Australian macro/M&A backend
-- Scheduled morning briefing
-- Push notifications
+## Deploy
+Upload the contents of this folder to the root of the GitHub `solbergfinance` repo and commit to `main`. Vercel should redeploy automatically.

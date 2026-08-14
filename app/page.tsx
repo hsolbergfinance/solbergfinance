@@ -24,6 +24,7 @@ type Story = {
   deep: string;
   source: string;
   link?: string;
+  isTemplate?: boolean;
 };
 
 type GmatSession = {
@@ -96,8 +97,9 @@ const starterStories: Story[] = [
     h:"RBA / inflation / labour-market watch",
     summary:"The live version will insert the most important Australian macro development here each morning.",
     why:"Rates, inflation and employment affect discount rates, debt costs, valuation multiples and transaction appetite.",
-    deep:"Use primary RBA and ABS data, then translate the release into a valuation and transaction-market implication.",
-    source:"RBA / ABS"
+    deep:"For a macro story, first identify what changed versus expectations: the cash-rate path, inflation trajectory, labour-market tightness or growth outlook. Then trace that change through risk-free rates and WACC, corporate borrowing costs, equity valuation multiples and sector earnings. Finally, ask what it means for transaction activity: higher funding costs can reduce leverage capacity and sponsor returns, while lower discount rates can support higher valuations and improve deal feasibility.",
+    source:"Live feed pending",
+    isTemplate:true
   },
   {
     id:"starter-ma",
@@ -106,8 +108,9 @@ const starterStories: Story[] = [
     h:"Australian M&A watch",
     summary:"The live backend will surface the most relevant announced, rumoured or contested Australian transaction.",
     why:"A current deal gives you a concrete interview example: strategic rationale, valuation, financing, advisers and shareholder reaction.",
-    deep:"Capture buyer, target, value, consideration, premium, advisers, sector, funding and comparable deals.",
-    source:"ASX / company release"
+    deep:"A proper M&A deep dive should identify the buyer and target, transaction value, form of consideration, premium, funding mix and advisers. Then assess the strategic rationale: scale, market entry, synergies, vertical integration or portfolio reshaping. The valuation section should compare the implied transaction multiple with trading comps and precedents, while the financing section should consider leverage, cost of debt, equity issuance and likely accretion or dilution. Finish with execution risks such as shareholder approval, regulation, financing conditions and competing bids.",
+    source:"Live feed pending",
+    isTemplate:true
   },
   {
     id:"starter-capital",
@@ -116,8 +119,9 @@ const starterStories: Story[] = [
     h:"Capital-markets watch",
     summary:"Track placements, rights issues, IPOs, block trades, bond issuance and refinancing.",
     why:"Issuance windows reveal investor risk appetite and the cost of capital facing Australian corporates.",
-    deep:"Explain why the issuer chose that financing route and what the market conditions imply.",
-    source:"ASX / issuer release"
+    deep:"For an ECM or DCM transaction, focus on why the issuer is raising capital now, how much is being raised and what the proceeds will fund. For equity, examine the structure, issue discount, dilution and investor demand. For debt, examine tenor, coupon or spread, refinancing purpose and the resulting maturity profile. The interview takeaway is the link between market conditions, investor risk appetite and the issuer's weighted average cost of capital.",
+    source:"Live feed pending",
+    isTemplate:true
   },
   {
     id:"starter-pe",
@@ -126,8 +130,9 @@ const starterStories: Story[] = [
     h:"Sponsor activity",
     summary:"Track Australian PE acquisitions, exits and auction processes.",
     why:"Sponsor activity is highly sensitive to funding conditions and directly relevant to M&A and leveraged-finance interviews.",
-    deep:"Focus on entry multiple, leverage capacity, operational value creation and exit options.",
-    source:"Company / press"
+    deep:"For private-equity activity, frame the story around the investment thesis and return mechanics. Estimate what supports the entry valuation, how much debt the business can sustain and where value creation could come from: EBITDA growth, margin expansion, bolt-ons, deleveraging or multiple expansion. Then consider plausible exits such as a trade sale, sponsor-to-sponsor sale or IPO and the key risks that could impair the expected IRR.",
+    source:"Live feed pending",
+    isTemplate:true
   }
 ];
 
@@ -236,7 +241,8 @@ function dbStoryToStory(row: any): Story {
     why: row.why_it_matters ?? "",
     deep: row.deep_dive ?? "",
     source: row.source_label ?? "",
-    link: row.source_url ?? ""
+    link: row.source_url ?? "",
+    isTemplate: false
   };
 }
 
@@ -255,6 +261,7 @@ export default function Home() {
   const [ibMode, setIbMode] = useState(true);
   const [taskModal, setTaskModal] = useState(false);
   const [storyModal, setStoryModal] = useState(false);
+  const [activeStory, setActiveStory] = useState<Story | null>(null);
   const [timeline, setTimeline] = useState<ScheduleItem[]>([]);
   const [syncing, setSyncing] = useState(false);
 
@@ -299,6 +306,11 @@ export default function Home() {
       setGmatMocks([]);
       setStories(starterStories);
       return;
+    }
+
+    const cloudIbSetting = user.user_metadata?.ib_interview_active;
+    if (typeof cloudIbSetting === "boolean") {
+      setIbMode(cloudIbSetting);
     }
 
     loadCloudData(user);
@@ -688,6 +700,60 @@ export default function Home() {
     ]);
   }
 
+  async function handleIbModeChange() {
+    if (!user) return;
+
+    const nextActive = !ibMode;
+    setAuthError("");
+
+    const { data, error } = await supabase.auth.updateUser({
+      data: {
+        ...user.user_metadata,
+        ib_interview_active: nextActive
+      }
+    });
+
+    if (error) {
+      setAuthError(error.message);
+      return;
+    }
+
+    setUser(data.user);
+    setIbMode(nextActive);
+
+    if (!nextActive) {
+      const { error: deleteError } = await supabase
+        .from("tasks")
+        .delete()
+        .eq("user_id", user.id)
+        .eq("category", "IB Prep")
+        .eq("title", "IB technical interview prep")
+        .gte("task_date", localDate());
+
+      if (deleteError) {
+        setAuthError(deleteError.message);
+      } else {
+        setTasks((prev) =>
+          prev.filter(
+            (task) =>
+              !(
+                task.category === "IB Prep" &&
+                task.title === "IB technical interview prep" &&
+                task.date >= localDate()
+              )
+          )
+        );
+      }
+
+      const cleanedTimeline = timeline.filter((item) => item[3] !== "ib");
+      setTimeline(cleanedTimeline);
+      localStorage.setItem(
+        `financeos.timeline.${localDate()}`,
+        JSON.stringify(cleanedTimeline)
+      );
+    }
+  }
+
   async function planMyDay() {
     const dow = melbourneDayOfWeek();
     const schedule: ScheduleItem[] = [];
@@ -700,14 +766,12 @@ export default function Home() {
       schedule.push(["—", "—", "35 min commute to Uni", ""]);
     }
 
-    if (ibMode) {
-      schedule.push(["08:00", "09:30", "IB technical + behavioural prep", "ib"]);
-      await ensureTask("IB technical interview prep", "IB Prep", 90, 5);
-    }
-
     (classes[dow] || []).forEach((item) => schedule.push(item));
 
     if (dow === 1) {
+      if (ibMode) {
+        schedule.push(["12:30","14:00","IB technical + behavioural prep","ib"]);
+      }
       schedule.push(
         ["16:15","18:00","Review Monday lectures / problems","study"],
         ["19:00","20:00","GMAT","gmat"]
@@ -715,55 +779,81 @@ export default function Home() {
     }
 
     if (dow === 2) {
+      if (ibMode) {
+        schedule.push(["11:30","13:00","IB technical + behavioural prep","ib"]);
+      }
       schedule.push(
-        ["11:30","13:30","Mathematical Economics deep work","study"],
-        ["14:15","16:15","Calculus deep work","study"],
+        ["13:15","15:15","Mathematical Economics deep work","study"],
+        ["15:30","17:30","Calculus deep work","study"],
         ["18:00","19:00","GMAT","gmat"]
       );
     }
 
     if (dow === 3) {
+      if (ibMode) {
+        schedule.push(["15:15","16:45","IB technical + behavioural prep","ib"]);
+      }
       schedule.push(
-        ["15:15","17:15","Time Series / coding","study"],
-        ["17:30","18:30","IB prep","ib"],
+        ["17:00","18:30","Time Series / coding","study"],
         ["19:00","20:00","GMAT Verbal","gmat"]
       );
     }
 
     if (dow === 4) {
+      if (ibMode) {
+        schedule.push(["09:00","10:15","IB technical + behavioural prep","ib"]);
+      }
       schedule.push(
-        ["09:00","10:15","IB prep","ib"],
         ["16:15","18:15","Algorithmic Trading","study"],
         ["18:30","19:30","GMAT Data Insights","gmat"]
       );
     }
 
     if (dow === 5) {
+      schedule.push(["08:30","11:00","Deep work — highest-weight assessment","study"]);
+      if (ibMode) {
+        schedule.push(["11:30","13:00","IB technical + behavioural prep","ib"]);
+      }
       schedule.push(
-        ["08:30","11:00","Deep work — highest-weight assessment","study"],
-        ["11:30","13:00","IB interview prep","ib"],
-        ["14:00","16:00","GMAT timed set + error review","gmat"]
+        ["14:00","16:00","GMAT timed set + error review","gmat"],
+        ["16:15","17:30","Weekly catch-up","study"]
       );
     }
 
     if (dow === 6) {
+      if (ibMode) {
+        schedule.push(["09:00","10:30","IB technical + behavioural prep","ib"]);
+      }
       schedule.push(
-        ["09:00","12:00","Weakest university subject","study"],
-        ["13:30","15:00","IB prep","ib"],
-        ["15:30","17:30","GMAT / mock","gmat"]
+        ["10:45","13:15","Weakest university subject","study"],
+        ["14:15","16:15","GMAT / mock","gmat"]
       );
     }
 
     if (dow === 0) {
       schedule.push(
         ["08:30","09:30","Gym","gym"],
-        ["10:00","12:00","Weekly review","study"],
-        ["13:00","15:00","Preview next week","study"],
-        ["15:30","16:30","GMAT","gmat"]
+        ["10:00","12:00","Weekly review","study"]
+      );
+      if (ibMode) {
+        schedule.push(["12:30","14:00","IB technical + behavioural prep","ib"]);
+      }
+      schedule.push(
+        ["14:15","16:00","Preview next week","study"],
+        ["16:15","17:15","GMAT","gmat"]
       );
     }
 
+    if (ibMode) {
+      await ensureTask("IB technical interview prep", "IB Prep", 90, 5);
+    }
     await ensureTask("GMAT focused practice", "GMAT", 60, 4);
+
+    schedule.sort((a, b) => {
+      if (a[0] === "—") return -1;
+      if (b[0] === "—") return 1;
+      return a[0].localeCompare(b[0]);
+    });
 
     setTimeline(schedule);
     localStorage.setItem(
@@ -846,9 +936,9 @@ export default function Home() {
           <button
             className="btn red"
             style={{ width: "100%" }}
-            onClick={() => setIbMode((value) => !value)}
+            onClick={handleIbModeChange}
           >
-            {ibMode ? "Interview not completed" : "Interview completed"}
+            {ibMode ? "Mark interview complete" : "Resume IB prep"}
           </button>
         </div>
       </aside>
@@ -1023,7 +1113,7 @@ export default function Home() {
                 <Header title="5-minute finance brief" />
                 <div className="list">
                   {sortedStories.slice(0, 2).map((story) => (
-                    <StoryCard key={story.id} story={story} />
+                    <StoryCard key={story.id} story={story} onDeepDive={setActiveStory} />
                   ))}
                 </div>
               </div>
@@ -1271,7 +1361,7 @@ export default function Home() {
                 <Header title="Top stories" />
                 <div className="list">
                   {sortedStories.map((story) => (
-                    <StoryCard key={story.id} story={story} />
+                    <StoryCard key={story.id} story={story} onDeepDive={setActiveStory} />
                   ))}
                 </div>
               </div>
@@ -1320,6 +1410,13 @@ export default function Home() {
           </section>
         )}
       </main>
+
+      {activeStory && (
+        <DeepDiveModal
+          story={activeStory}
+          onClose={() => setActiveStory(null)}
+        />
+      )}
 
       {taskModal && (
         <TaskModal
@@ -1467,11 +1564,18 @@ function Metric({
   );
 }
 
-function StoryCard({ story }: { story: Story }) {
+function StoryCard({
+  story,
+  onDeepDive
+}: {
+  story: Story;
+  onDeepDive: (story: Story) => void;
+}) {
   return (
     <div className="item news-card">
       <div className="story-meta">
         <span className={`tag ${tagClass(story.cat)}`}>{story.cat}</span>
+        {story.isTemplate && <span className="tag templateTag">Template</span>}
         <span className="small">
           IB relevance {story.score}/10 · {story.source}
         </span>
@@ -1484,28 +1588,147 @@ function StoryCard({ story }: { story: Story }) {
         <strong>Why it matters:</strong> {story.why}
       </div>
 
-      <details style={{ marginTop: 9 }}>
-        <summary className="small" style={{ cursor: "pointer" }}>
-          Deep dive
-        </summary>
-        <div className="small" style={{ marginTop: 8 }}>
-          {story.deep}
+      <button
+        className="btn deepDiveButton"
+        onClick={() => onDeepDive(story)}
+      >
+        Open deep dive →
+      </button>
+    </div>
+  );
+}
+
+function DeepDiveModal({
+  story,
+  onClose
+}: {
+  story: Story;
+  onClose: () => void;
+}) {
+  const lenses = deepDiveLenses(story.cat);
+
+  return (
+    <div className="modalWrap deepDiveWrap" onClick={onClose}>
+      <div
+        className="modal deepDiveModal"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <div className="deepDiveHeader">
+          <div>
+            <div className="story-meta">
+              <span className={`tag ${tagClass(story.cat)}`}>{story.cat}</span>
+              <span className="small">IB relevance {story.score}/10</span>
+            </div>
+            <h2>{story.h}</h2>
+          </div>
+          <button className="btn" onClick={onClose}>Close</button>
         </div>
-        {story.link && (
-          <div style={{ marginTop: 8 }}>
+
+        {story.isTemplate && (
+          <div className="templateNotice">
+            <strong>This card is an analysis template, not a live article.</strong>
+            <div className="small" style={{ marginTop: 4 }}>
+              Live news ingestion is not connected yet. When it is, this same
+              deep-dive view will open the actual story analysis rather than the framework.
+            </div>
+          </div>
+        )}
+
+        <DeepDiveSection title="What happened">
+          {story.summary || "No summary has been saved for this story yet."}
+        </DeepDiveSection>
+
+        <DeepDiveSection title="Why an investment banker should care">
+          {story.why || "No IB relevance note has been saved yet."}
+        </DeepDiveSection>
+
+        <DeepDiveSection title="Transaction / valuation / market mechanics">
+          {story.deep || "No detailed analysis has been saved yet."}
+        </DeepDiveSection>
+
+        <div className="deepDiveSection">
+          <div className="kicker">Interview lens</div>
+          <ul className="deepDiveList">
+            {lenses.map((lens) => <li key={lens}>{lens}</li>)}
+          </ul>
+        </div>
+
+        <div className="deepDiveFooter">
+          <div className="small">Source: {story.source || "Not supplied"}</div>
+          {story.link && (
             <a
+              className="btn primary sourceButton"
               href={story.link}
               target="_blank"
               rel="noreferrer"
-              style={{ color: "#93c5fd", fontSize: 12 }}
             >
-              Open source ↗
+              Open original source ↗
             </a>
-          </div>
-        )}
-      </details>
+          )}
+        </div>
+      </div>
     </div>
   );
+}
+
+function DeepDiveSection({
+  title,
+  children
+}: {
+  title: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="deepDiveSection">
+      <div className="kicker">{title}</div>
+      <div className="deepDiveBody">{children}</div>
+    </div>
+  );
+}
+
+function deepDiveLenses(category: string) {
+  if (category === "M&A") {
+    return [
+      "What is the buyer's strategic rationale and why transact now?",
+      "What valuation multiple and takeover premium are implied, and how do they compare with precedents?",
+      "How is the acquisition funded and what does that imply for leverage and accretion / dilution?",
+      "Which regulatory, shareholder, financing or competing-bid risks could stop the transaction?"
+    ];
+  }
+
+  if (category === "Australian Macro") {
+    return [
+      "How does the development change the expected RBA path and the risk-free rate?",
+      "What is the likely effect on WACC, valuation multiples and debt capacity?",
+      "Which Australian sectors are most exposed and why?",
+      "Would this make sponsors or strategic buyers more or less willing to transact?"
+    ];
+  }
+
+  if (category === "ECM / DCM") {
+    return [
+      "Why is the issuer raising capital now and what will the proceeds fund?",
+      "How does pricing compare with the prevailing share price or secondary-market debt?",
+      "What does investor demand say about the current issuance window?",
+      "How does the transaction change dilution, leverage, liquidity and cost of capital?"
+    ];
+  }
+
+  if (category === "Private Equity") {
+    return [
+      "What is the sponsor's investment thesis and likely entry valuation?",
+      "How much leverage can the asset support and how sensitive are returns to rates?",
+      "What are the main EBITDA-growth, margin, bolt-on and deleveraging levers?",
+      "What exit routes are realistic and what could impair the sponsor's IRR?"
+    ];
+  }
+
+  return [
+    "What is the direct read-through for Australian companies or financing markets?",
+    "Which sectors, valuations or transaction types are most affected?",
+    "Is the effect primarily on earnings, discount rates, funding conditions or risk appetite?",
+    "What concise interview-ready view would you give if asked why this story matters?"
+  ];
 }
 
 function TaskModal({
