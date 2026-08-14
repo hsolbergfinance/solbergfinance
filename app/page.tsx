@@ -42,6 +42,35 @@ type GmatMock = {
   score: number;
 };
 
+type PracticeQuestion = {
+  id: string;
+  type: "mcq" | "open";
+  question: string;
+  options: string[];
+  correctIndex: number;
+  idealAnswer: string;
+  explanation: string;
+  hint: string;
+  keyPoints: string[];
+};
+
+type PracticeSet = {
+  title: string;
+  questions: PracticeQuestion[];
+};
+
+type PracticeAttempt = {
+  id: string;
+  attemptedAt: string;
+  subject: string;
+  topic: string;
+  difficulty: string;
+  format: string;
+  questionType: string;
+  isCorrect: boolean | null;
+  selfRating: number | null;
+};
+
 type ScheduleItem = [string, string, string, string];
 
 const classes: Record<number, ScheduleItem[]> = {
@@ -135,6 +164,76 @@ const starterStories: Story[] = [
     isTemplate:true
   }
 ];
+
+const practiceTopics: Record<string, string[]> = {
+  "Calculus 1": [
+    "Mixed current-course review",
+    "Logic and proof techniques",
+    "Functions, domain/range and injectivity",
+    "Complex numbers",
+    "Differentiation and function sketching",
+    "Implicit differentiation",
+    "Integration techniques",
+    "Differential equations",
+    "Vectors and vector calculus"
+  ],
+  "Mathematical Economics": [
+    "Mixed current-course review",
+    "Euclidean space and topology",
+    "Convexity and concavity",
+    "Continuity and Weierstrass",
+    "Gradients and Hessians",
+    "Unconstrained optimisation",
+    "Lagrange and Kuhn-Tucker",
+    "Envelope theorem",
+    "Matrices and linear systems",
+    "Implicit and inverse function theorems",
+    "Fixed points and Nash equilibrium",
+    "Dynamic optimisation"
+  ],
+  "Time Series": [
+    "Mixed current-course review",
+    "Time-series objects, aggregation and windows",
+    "Trend, seasonality and transformations",
+    "Stationarity",
+    "ACF and PACF",
+    "AR and ARDL models",
+    "Model selection and AIC",
+    "VAR intuition",
+    "Forecasting and uncertainty"
+  ],
+  "Algorithmic Trading": [
+    "Mixed current-course review",
+    "Market microstructure",
+    "Game theory foundations",
+    "Python for trading",
+    "Trading robots",
+    "Backtesting and biases",
+    "CAPM implementation",
+    "Portfolio reallocation",
+    "Statistical arbitrage",
+    "Fundamental robots"
+  ],
+  "IB Technical": [
+    "Mixed technical interview",
+    "Three financial statements",
+    "Enterprise value vs equity value",
+    "Trading comps and precedents",
+    "DCF and WACC",
+    "M&A process",
+    "Accretion / dilution",
+    "Synergies and purchase consideration",
+    "LBO mechanics",
+    "Australian schemes vs takeovers",
+    "Commercial judgement"
+  ],
+  "GMAT": [
+    "Mixed GMAT",
+    "Quantitative Reasoning",
+    "Verbal Reasoning",
+    "Data Insights"
+  ]
+};
 
 const subjectData: Record<string, string[]> = {
   "Calculus 1":[
@@ -258,6 +357,20 @@ export default function Home() {
   const [stories, setStories] = useState<Story[]>(starterStories);
   const [gmatSessions, setGmatSessions] = useState<GmatSession[]>([]);
   const [gmatMocks, setGmatMocks] = useState<GmatMock[]>([]);
+  const [practiceAttempts, setPracticeAttempts] = useState<PracticeAttempt[]>([]);
+  const [practiceSubject, setPracticeSubject] = useState("Calculus 1");
+  const [practiceTopic, setPracticeTopic] = useState(practiceTopics["Calculus 1"][0]);
+  const [practiceDifficulty, setPracticeDifficulty] = useState("Current course");
+  const [practiceFormat, setPracticeFormat] = useState<"mcq" | "open" | "mixed">("mixed");
+  const [practiceCount, setPracticeCount] = useState(5);
+  const [practiceSet, setPracticeSet] = useState<PracticeSet | null>(null);
+  const [practiceIndex, setPracticeIndex] = useState(0);
+  const [practiceGenerating, setPracticeGenerating] = useState(false);
+  const [practiceError, setPracticeError] = useState("");
+  const [selectedOption, setSelectedOption] = useState<number | null>(null);
+  const [practiceRevealed, setPracticeRevealed] = useState(false);
+  const [practiceHintVisible, setPracticeHintVisible] = useState(false);
+  const [practiceAnsweredIds, setPracticeAnsweredIds] = useState<string[]>([]);
   const [ibMode, setIbMode] = useState(true);
   const [taskModal, setTaskModal] = useState(false);
   const [storyModal, setStoryModal] = useState(false);
@@ -304,6 +417,7 @@ export default function Home() {
       setTasks([]);
       setGmatSessions([]);
       setGmatMocks([]);
+      setPracticeAttempts([]);
       setStories(starterStories);
       return;
     }
@@ -322,7 +436,7 @@ export default function Home() {
     try {
       await migrateLocalDataOnce(activeUser);
 
-      const [tasksResult, storiesResult, gmatResult, mocksResult] =
+      const [tasksResult, storiesResult, gmatResult, mocksResult, practiceResult] =
         await Promise.all([
           supabase
             .from("tasks")
@@ -349,7 +463,14 @@ export default function Home() {
             .from("gmat_mocks")
             .select("*")
             .eq("user_id", activeUser.id)
-            .order("mock_date", { ascending: false })
+            .order("mock_date", { ascending: false }),
+
+          supabase
+            .from("practice_attempts")
+            .select("id, attempted_at, subject, topic, difficulty, practice_format, question_type, is_correct, self_rating")
+            .eq("user_id", activeUser.id)
+            .order("attempted_at", { ascending: false })
+            .limit(300)
         ]);
 
       const firstError =
@@ -383,6 +504,25 @@ export default function Home() {
           score: row.total_score
         }))
       );
+
+      if (practiceResult.error) {
+        console.warn("Practice history is not configured yet:", practiceResult.error.message);
+        setPracticeAttempts([]);
+      } else {
+        setPracticeAttempts(
+          (practiceResult.data ?? []).map((row: any) => ({
+            id: row.id,
+            attemptedAt: row.attempted_at,
+            subject: row.subject,
+            topic: row.topic ?? "",
+            difficulty: row.difficulty,
+            format: row.practice_format,
+            questionType: row.question_type,
+            isCorrect: row.is_correct,
+            selfRating: row.self_rating
+          }))
+        );
+      }
     } catch (error: any) {
       console.error(error);
       setAuthError(error.message ?? "Could not load cloud data.");
@@ -700,6 +840,146 @@ export default function Home() {
     ]);
   }
 
+  async function generatePracticeSet() {
+    setPracticeGenerating(true);
+    setPracticeError("");
+    setPracticeSet(null);
+    setPracticeIndex(0);
+    setSelectedOption(null);
+    setPracticeRevealed(false);
+    setPracticeHintVisible(false);
+    setPracticeAnsweredIds([]);
+
+    try {
+      const { data } = await supabase.auth.getSession();
+      const token = data.session?.access_token;
+      if (!token) throw new Error("Your login session has expired. Sign in again.");
+
+      const response = await fetch("/api/practice", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          subject: practiceSubject,
+          topic: practiceTopic,
+          difficulty: practiceDifficulty,
+          format: practiceFormat,
+          count: practiceCount
+        })
+      });
+
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || "Could not generate practice questions.");
+
+      setPracticeSet(result as PracticeSet);
+    } catch (error: any) {
+      setPracticeError(error.message ?? "Could not generate practice questions.");
+    } finally {
+      setPracticeGenerating(false);
+    }
+  }
+
+  async function savePracticeAttempt(
+    question: PracticeQuestion,
+    selectedAnswer: string | null,
+    isCorrect: boolean | null,
+    selfRating: number | null
+  ) {
+    if (!user || practiceAnsweredIds.includes(question.id)) return;
+
+    const correctAnswer = question.type === "mcq" && question.correctIndex >= 0
+      ? question.options[question.correctIndex] ?? question.idealAnswer
+      : question.idealAnswer;
+
+    const { data, error } = await supabase
+      .from("practice_attempts")
+      .insert({
+        user_id: user.id,
+        subject: practiceSubject,
+        topic: practiceTopic,
+        difficulty: practiceDifficulty,
+        practice_format: practiceFormat,
+        question_text: question.question,
+        question_type: question.type,
+        selected_answer: selectedAnswer,
+        correct_answer: correctAnswer,
+        is_correct: isCorrect,
+        self_rating: selfRating,
+        explanation: question.explanation,
+        question_payload: question
+      })
+      .select("id, attempted_at, subject, topic, difficulty, practice_format, question_type, is_correct, self_rating")
+      .single();
+
+    if (error) {
+      setPracticeError(error.message);
+      return;
+    }
+
+    setPracticeAnsweredIds((prev) => [...prev, question.id]);
+    setPracticeAttempts((prev) => [
+      {
+        id: data.id,
+        attemptedAt: data.attempted_at,
+        subject: data.subject,
+        topic: data.topic ?? "",
+        difficulty: data.difficulty,
+        format: data.practice_format,
+        questionType: data.question_type,
+        isCorrect: data.is_correct,
+        selfRating: data.self_rating
+      },
+      ...prev
+    ]);
+  }
+
+  async function answerPracticeMcq(optionIndex: number) {
+    const question = practiceSet?.questions[practiceIndex];
+    if (!question || practiceRevealed) return;
+
+    setSelectedOption(optionIndex);
+    setPracticeRevealed(true);
+    await savePracticeAttempt(
+      question,
+      question.options[optionIndex] ?? null,
+      optionIndex === question.correctIndex,
+      null
+    );
+  }
+
+  async function rateOpenPractice(rating: number) {
+    const question = practiceSet?.questions[practiceIndex];
+    if (!question) return;
+
+    setPracticeRevealed(true);
+    await savePracticeAttempt(question, null, null, rating);
+  }
+
+  function nextPracticeQuestion() {
+    if (!practiceSet) return;
+
+    if (practiceIndex >= practiceSet.questions.length - 1) {
+      setPracticeIndex(practiceSet.questions.length);
+      return;
+    }
+
+    setPracticeIndex((value) => value + 1);
+    setSelectedOption(null);
+    setPracticeRevealed(false);
+    setPracticeHintVisible(false);
+  }
+
+  function resetPracticeSet() {
+    setPracticeSet(null);
+    setPracticeIndex(0);
+    setSelectedOption(null);
+    setPracticeRevealed(false);
+    setPracticeHintVisible(false);
+    setPracticeAnsweredIds([]);
+  }
+
   async function handleIbModeChange() {
     if (!user) return;
 
@@ -895,7 +1175,7 @@ export default function Home() {
         <div className="sub">Academic + GMAT + Investment Banking</div>
 
         <nav className="nav">
-          {["dashboard","planner","university","gmat","briefing","performance"].map((item) => (
+          {["dashboard","planner","university","practice","gmat","briefing","performance"].map((item) => (
             <button
               key={item}
               className={tab === item ? "active" : ""}
@@ -1174,6 +1454,218 @@ export default function Home() {
           </section>
         )}
 
+        {tab === "practice" && (
+          <section>
+            <div className="top">
+              <div>
+                <h1>Practice</h1>
+                <div className="muted">
+                  AI-generated drills for a tram ride, study break or interview warm-up
+                </div>
+              </div>
+              {practiceSet && (
+                <button className="btn" onClick={resetPracticeSet}>
+                  New set
+                </button>
+              )}
+            </div>
+
+            <div className="grid grid3">
+              <Metric
+                title="Questions practised"
+                value={`${practiceAttempts.length}`}
+                sub="Cloud synced"
+              />
+              <Metric
+                title="MCQ accuracy"
+                value={
+                  practiceAttempts.filter((attempt) => attempt.isCorrect !== null).length
+                    ? `${Math.round(
+                        (practiceAttempts.filter((attempt) => attempt.isCorrect === true).length /
+                          practiceAttempts.filter((attempt) => attempt.isCorrect !== null).length) *
+                          100
+                      )}%`
+                    : "—"
+                }
+              />
+              <Metric
+                title="Subjects practised"
+                value={`${new Set(practiceAttempts.map((attempt) => attempt.subject)).size}`}
+              />
+            </div>
+
+            {!practiceSet && (
+              <div className="grid grid2 section practiceSetupGrid">
+                <div className="card practiceHero">
+                  <div className="kicker">Tram Mode</div>
+                  <div className="metric-sm" style={{ marginTop: 7 }}>
+                    Generate a short set and answer one question at a time.
+                  </div>
+                  <div className="small" style={{ marginTop: 8 }}>
+                    MCQs grade themselves. Open interview questions reveal an ideal answer and let you self-rate.
+                    Your results sync to Supabase so the app can learn which areas need more work later.
+                  </div>
+                </div>
+
+                <div className="card">
+                  <div className="practiceControls">
+                    <div>
+                      <label className="small">Subject</label>
+                      <select
+                        value={practiceSubject}
+                        onChange={(event) => {
+                          const subject = event.target.value;
+                          setPracticeSubject(subject);
+                          setPracticeTopic(practiceTopics[subject][0]);
+                          if (subject === "IB Technical") setPracticeFormat("open");
+                          else if (subject === "GMAT") setPracticeFormat("mcq");
+                          else setPracticeFormat("mixed");
+                        }}
+                      >
+                        {Object.keys(practiceTopics).map((subject) => (
+                          <option key={subject}>{subject}</option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="small">Topic</label>
+                      <select
+                        value={practiceTopic}
+                        onChange={(event) => setPracticeTopic(event.target.value)}
+                      >
+                        {practiceTopics[practiceSubject].map((topic) => (
+                          <option key={topic}>{topic}</option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="small">Difficulty</label>
+                      <select
+                        value={practiceDifficulty}
+                        onChange={(event) => setPracticeDifficulty(event.target.value)}
+                      >
+                        <option>Current course</option>
+                        <option>Exam level</option>
+                        <option>Stretch</option>
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="small">Question style</label>
+                      <select
+                        value={practiceFormat}
+                        onChange={(event) =>
+                          setPracticeFormat(event.target.value as "mcq" | "open" | "mixed")
+                        }
+                      >
+                        <option value="mixed">Mixed</option>
+                        <option value="mcq">Multiple choice</option>
+                        <option value="open">Open / interview style</option>
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="small">Session</label>
+                      <select
+                        value={practiceCount}
+                        onChange={(event) => setPracticeCount(Number(event.target.value))}
+                      >
+                        <option value={3}>Tram mini — 3 questions</option>
+                        <option value={5}>Quick set — 5 questions</option>
+                        <option value={8}>Longer set — 8 questions</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  <button
+                    className="btn primary practiceGenerate"
+                    onClick={generatePracticeSet}
+                    disabled={practiceGenerating}
+                  >
+                    {practiceGenerating ? "Generating…" : "Generate practice set"}
+                  </button>
+
+                  {practiceError && (
+                    <div className="errorBox" style={{ marginTop: 12 }}>
+                      {practiceError}
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {practiceSet && practiceIndex < practiceSet.questions.length && (
+              <PracticeQuestionCard
+                title={practiceSet.title}
+                question={practiceSet.questions[practiceIndex]}
+                index={practiceIndex}
+                total={practiceSet.questions.length}
+                selectedOption={selectedOption}
+                revealed={practiceRevealed}
+                hintVisible={practiceHintVisible}
+                onToggleHint={() => setPracticeHintVisible((value) => !value)}
+                onAnswer={answerPracticeMcq}
+                onRevealOpen={() => setPracticeRevealed(true)}
+                onRateOpen={rateOpenPractice}
+                onNext={nextPracticeQuestion}
+              />
+            )}
+
+            {practiceSet && practiceIndex >= practiceSet.questions.length && (
+              <div className="card section practiceComplete">
+                <div className="kicker">Set complete</div>
+                <div className="metric-sm" style={{ marginTop: 7 }}>
+                  Nice. That set is saved to your practice history.
+                </div>
+                <div className="small" style={{ marginTop: 8 }}>
+                  Generate another set now, or switch topic. Over time we can use your attempt history to automatically target weak areas.
+                </div>
+                <button className="btn primary" style={{ marginTop: 12 }} onClick={resetPracticeSet}>
+                  Build another set
+                </button>
+              </div>
+            )}
+
+            <div className="card section">
+              <div className="section-head">
+                <h2>Recent practice</h2>
+              </div>
+              {!practiceAttempts.length && (
+                <div className="small">No AI practice attempts saved yet.</div>
+              )}
+              {practiceAttempts.slice(0, 10).map((attempt) => (
+                <div className="assessment row" key={attempt.id}>
+                  <div>
+                    <strong>{attempt.subject}</strong>
+                    <div className="small">{attempt.topic} · {attempt.difficulty}</div>
+                  </div>
+                  <div className={
+                    attempt.isCorrect === true
+                      ? "practiceResult good"
+                      : attempt.isCorrect === false
+                      ? "practiceResult bad"
+                      : "practiceResult"
+                  }>
+                    {attempt.isCorrect === true
+                      ? "Correct"
+                      : attempt.isCorrect === false
+                      ? "Missed"
+                      : attempt.selfRating === 3
+                      ? "Strong"
+                      : attempt.selfRating === 2
+                      ? "Partial"
+                      : attempt.selfRating === 1
+                      ? "Review"
+                      : "Open"}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </section>
+        )}
+
         {tab === "gmat" && (
           <section>
             <div className="top">
@@ -1437,6 +1929,133 @@ export default function Home() {
           }}
         />
       )}
+    </div>
+  );
+}
+
+function PracticeQuestionCard({
+  title,
+  question,
+  index,
+  total,
+  selectedOption,
+  revealed,
+  hintVisible,
+  onToggleHint,
+  onAnswer,
+  onRevealOpen,
+  onRateOpen,
+  onNext
+}: {
+  title: string;
+  question: PracticeQuestion;
+  index: number;
+  total: number;
+  selectedOption: number | null;
+  revealed: boolean;
+  hintVisible: boolean;
+  onToggleHint: () => void;
+  onAnswer: (index: number) => void;
+  onRevealOpen: () => void;
+  onRateOpen: (rating: number) => void;
+  onNext: () => void;
+}) {
+  return (
+    <div className="practiceStage section">
+      <div className="practiceProgressRow">
+        <div>
+          <div className="kicker">{title}</div>
+          <div className="small">Question {index + 1} of {total}</div>
+        </div>
+        <div className="practiceProgressTrack">
+          <span style={{ width: `${((index + 1) / total) * 100}%` }} />
+        </div>
+      </div>
+
+      <div className="card practiceQuestionCard">
+        <div className="practiceQuestionText">{question.question}</div>
+
+        <div className="practiceUtilityRow">
+          <button className="btn practiceSmallBtn" onClick={onToggleHint}>
+            {hintVisible ? "Hide hint" : "Hint"}
+          </button>
+          <span className="tag">{question.type === "mcq" ? "Multiple choice" : "Open answer"}</span>
+        </div>
+
+        {hintVisible && (
+          <div className="practiceHint">{question.hint}</div>
+        )}
+
+        {question.type === "mcq" && (
+          <div className="practiceOptions">
+            {question.options.map((option, optionIndex) => {
+              const isCorrect = optionIndex === question.correctIndex;
+              const isSelected = selectedOption === optionIndex;
+              const className = revealed
+                ? isCorrect
+                  ? "practiceOption correct"
+                  : isSelected
+                  ? "practiceOption incorrect"
+                  : "practiceOption mutedOption"
+                : "practiceOption";
+
+              return (
+                <button
+                  key={`${question.id}-${optionIndex}`}
+                  className={className}
+                  onClick={() => onAnswer(optionIndex)}
+                  disabled={revealed}
+                >
+                  <span className="practiceLetter">{String.fromCharCode(65 + optionIndex)}</span>
+                  <span>{option}</span>
+                </button>
+              );
+            })}
+          </div>
+        )}
+
+        {question.type === "open" && !revealed && (
+          <div className="practiceOpenPrompt">
+            <div className="small">
+              Answer it aloud or in your head first. For IB, try to keep your answer structured and concise.
+            </div>
+            <button className="btn primary" onClick={onRevealOpen}>
+              Reveal ideal answer
+            </button>
+          </div>
+        )}
+
+        {revealed && (
+          <div className="practiceFeedback">
+            <div className="kicker">Ideal answer</div>
+            <div className="practiceIdealAnswer">{question.idealAnswer}</div>
+
+            <div className="kicker practiceFeedbackHeading">Why</div>
+            <div className="small practiceExplanation">{question.explanation}</div>
+
+            {!!question.keyPoints.length && (
+              <div className="practiceKeyPoints">
+                {question.keyPoints.map((point) => (
+                  <div key={point}>• {point}</div>
+                ))}
+              </div>
+            )}
+
+            {question.type === "open" && (
+              <div className="practiceRatingRow">
+                <span className="small">How did your answer compare?</span>
+                <button className="btn" onClick={() => onRateOpen(1)}>Missed it</button>
+                <button className="btn" onClick={() => onRateOpen(2)}>Partial</button>
+                <button className="btn" onClick={() => onRateOpen(3)}>Strong</button>
+              </div>
+            )}
+
+            <button className="btn primary practiceNextBtn" onClick={onNext}>
+              {index === total - 1 ? "Finish set" : "Next question"}
+            </button>
+          </div>
+        )}
+      </div>
     </div>
   );
 }

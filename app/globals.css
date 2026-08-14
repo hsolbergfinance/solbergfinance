@@ -648,3 +648,273 @@ input, select, textarea {
     text-align: center;
   }
 }
+
+/* AI Practice */
+.practiceSetupGrid {
+  align-items: start;
+}
+
+.practiceHero {
+  min-height: 230px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+
+.practiceControls {
+  display: grid;
+  grid-template-columns: repeat(2,minmax(0,1fr));
+  gap: 12px;
+}
+
+.practiceControls > div:last-child {
+  grid-column: 1 / -1;
+}
+
+.practiceGenerate {
+  width: 100%;
+  margin-top: 14px;
+}
+
+.practiceGenerate:disabled {
+  opacity: .65;
+  cursor: wait;
+}
+
+.practiceStage {
+  max-width: 820px;
+  margin-left: auto;
+  margin-right: auto;
+}
+
+.practiceProgressRow {
+  display: grid;
+  grid-template-columns: auto minmax(140px, 1fr);
+  gap: 16px;
+  align-items: end;
+  margin-bottom: 10px;
+}
+
+.practiceProgressTrack {
+  height: 8px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: #202c44;
+}
+
+.practiceProgressTrack span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--blue);
+}
+
+.practiceQuestionCard {
+  padding: 22px;
+}
+
+.practiceQuestionText {
+  font-size: 21px;
+  line-height: 1.45;
+  font-weight: 800;
+  letter-spacing: -.015em;
+  white-space: pre-wrap;
+}
+
+.practiceUtilityRow {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  margin-top: 16px;
+}
+
+.practiceSmallBtn {
+  padding: 7px 10px;
+}
+
+.practiceHint {
+  margin-top: 12px;
+  padding: 11px 12px;
+  border-radius: 11px;
+  border: 1px solid #31517b;
+  background: #0b1a31;
+  color: #dbeafe;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.practiceOptions {
+  display: grid;
+  gap: 10px;
+  margin-top: 16px;
+}
+
+.practiceOption {
+  display: grid;
+  grid-template-columns: 32px 1fr;
+  gap: 10px;
+  align-items: center;
+  width: 100%;
+  border: 1px solid var(--line);
+  background: #131d31;
+  color: #eef4fb;
+  text-align: left;
+  padding: 12px;
+  border-radius: 12px;
+  cursor: pointer;
+}
+
+.practiceOption:hover:not(:disabled) {
+  border-color: #4d6486;
+  background: #18243a;
+}
+
+.practiceOption.correct {
+  border-color: #15803d;
+  background: rgba(21,128,61,.15);
+}
+
+.practiceOption.incorrect {
+  border-color: #b91c1c;
+  background: rgba(185,28,28,.14);
+}
+
+.practiceOption.mutedOption {
+  opacity: .55;
+}
+
+.practiceLetter {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 9px;
+  background: #22304a;
+  font-weight: 900;
+  color: #cbd5e1;
+}
+
+.practiceOpenPrompt {
+  margin-top: 18px;
+  display: flex;
+  justify-content: space-between;
+  gap: 14px;
+  align-items: center;
+  padding: 14px;
+  border-radius: 12px;
+  border: 1px solid var(--line);
+  background: #111b2e;
+}
+
+.practiceFeedback {
+  margin-top: 18px;
+  padding-top: 18px;
+  border-top: 1px solid var(--line);
+}
+
+.practiceIdealAnswer {
+  margin-top: 7px;
+  color: #f8fafc;
+  font-size: 15px;
+  line-height: 1.65;
+  white-space: pre-wrap;
+}
+
+.practiceFeedbackHeading {
+  margin-top: 16px;
+}
+
+.practiceExplanation {
+  margin-top: 7px;
+  color: #cbd5e1;
+  line-height: 1.6;
+}
+
+.practiceKeyPoints {
+  margin-top: 12px;
+  display: grid;
+  gap: 6px;
+  padding: 12px;
+  border-radius: 11px;
+  background: #0e1829;
+  color: #dbe5f1;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.practiceRatingRow {
+  margin-top: 16px;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.practiceNextBtn {
+  margin-top: 16px;
+  width: 100%;
+}
+
+.practiceComplete {
+  max-width: 720px;
+  margin-left: auto;
+  margin-right: auto;
+  text-align: center;
+}
+
+.practiceResult {
+  font-size: 11px;
+  font-weight: 900;
+  text-transform: uppercase;
+  letter-spacing: .05em;
+  padding: 5px 8px;
+  border-radius: 999px;
+  background: #26344d;
+  color: #cbd5e1;
+}
+
+.practiceResult.good {
+  background: rgba(21,128,61,.2);
+  color: #bbf7d0;
+}
+
+.practiceResult.bad {
+  background: rgba(185,28,28,.18);
+  color: #fecaca;
+}
+
+@media (max-width: 700px) {
+  .practiceControls {
+    grid-template-columns: 1fr;
+  }
+
+  .practiceControls > div:last-child {
+    grid-column: auto;
+  }
+
+  .practiceProgressRow {
+    grid-template-columns: 1fr;
+  }
+
+  .practiceQuestionCard {
+    padding: 16px;
+  }
+
+  .practiceQuestionText {
+    font-size: 18px;
+  }
+
+  .practiceOpenPrompt {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .practiceUtilityRow {
+    align-items: flex-start;
+  }
+
+  .practiceRatingRow .btn {
+    flex: 1 1 auto;
+  }
+}
