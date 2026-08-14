@@ -1,6 +1,8 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { FormEvent, useEffect, useMemo, useState } from "react";
+import type { User } from "@supabase/supabase-js";
+import { supabase } from "../lib/supabase/client";
 
 type Task = {
   id: string;
@@ -21,6 +23,22 @@ type Story = {
   why: string;
   deep: string;
   source: string;
+  link?: string;
+};
+
+type GmatSession = {
+  id: string;
+  date: string;
+  section: "Quant" | "Verbal" | "Data Insights";
+  questions: number;
+  correct: number;
+  minutes: number;
+};
+
+type GmatMock = {
+  id: string;
+  date: string;
+  score: number;
 };
 
 type ScheduleItem = [string, string, string, string];
@@ -72,7 +90,7 @@ const assessments = [
 
 const starterStories: Story[] = [
   {
-    id:"m1",
+    id:"starter-macro",
     cat:"Australian Macro",
     score:10,
     h:"RBA / inflation / labour-market watch",
@@ -82,7 +100,7 @@ const starterStories: Story[] = [
     source:"RBA / ABS"
   },
   {
-    id:"d1",
+    id:"starter-ma",
     cat:"M&A",
     score:10,
     h:"Australian M&A watch",
@@ -92,7 +110,7 @@ const starterStories: Story[] = [
     source:"ASX / company release"
   },
   {
-    id:"c1",
+    id:"starter-capital",
     cat:"ECM / DCM",
     score:8,
     h:"Capital-markets watch",
@@ -102,7 +120,7 @@ const starterStories: Story[] = [
     source:"ASX / issuer release"
   },
   {
-    id:"p1",
+    id:"starter-pe",
     cat:"Private Equity",
     score:8,
     h:"Sponsor activity",
@@ -121,17 +139,17 @@ const subjectData: Record<string, string[]> = {
     "Final examination — 60%"
   ],
   "Mathematical Economics":[
-    "Assignment 1 — 15%",
-    "Mid-semester exam — 20%",
-    "Assignment 2 — 15%",
-    "Final exam — 50%"
+    "Assignment 1 — 15% — 26 Aug",
+    "Mid-semester exam — 20% — 9 Sep",
+    "Assignment 2 — 15% — 7 Oct",
+    "Final exam — 50% (hurdle)"
   ],
   "Time Series":[
     "Tutorial/homework — 10%",
     "Assignment 1 — 10%",
     "Assignment 2 — 15%",
     "Assignment 3 — 15%",
-    "Final exam — 50%"
+    "Final exam — 50% (hurdle)"
   ],
   "Algorithmic Trading":[
     "Task 1 — 13%",
@@ -150,7 +168,9 @@ function localDate(d = new Date()) {
   }).formatToParts(d);
 
   const values = Object.fromEntries(
-    parts.filter((part) => part.type !== "literal").map((part) => [part.type, part.value])
+    parts
+      .filter((part) => part.type !== "literal")
+      .map((part) => [part.type, part.value])
   );
 
   return `${values.year}-${values.month}-${values.day}`;
@@ -194,91 +214,481 @@ function tagClass(cat: string) {
   return "global";
 }
 
+function dbTaskToTask(row: any): Task {
+  return {
+    id: row.id,
+    title: row.title,
+    category: row.category,
+    date: row.task_date,
+    mins: row.minutes,
+    priority: row.priority,
+    done: row.completed
+  };
+}
+
+function dbStoryToStory(row: any): Story {
+  return {
+    id: row.id,
+    cat: row.category,
+    score: row.relevance,
+    h: row.headline,
+    summary: row.summary ?? "",
+    why: row.why_it_matters ?? "",
+    deep: row.deep_dive ?? "",
+    source: row.source_label ?? "",
+    link: row.source_url ?? ""
+  };
+}
+
 export default function Home() {
+  const [authReady, setAuthReady] = useState(false);
+  const [user, setUser] = useState<User | null>(null);
+  const [authMode, setAuthMode] = useState<"signin" | "signup">("signin");
+  const [authMessage, setAuthMessage] = useState("");
+  const [authError, setAuthError] = useState("");
+
   const [tab, setTab] = useState("dashboard");
   const [tasks, setTasks] = useState<Task[]>([]);
   const [stories, setStories] = useState<Story[]>(starterStories);
+  const [gmatSessions, setGmatSessions] = useState<GmatSession[]>([]);
+  const [gmatMocks, setGmatMocks] = useState<GmatMock[]>([]);
   const [ibMode, setIbMode] = useState(true);
   const [taskModal, setTaskModal] = useState(false);
   const [storyModal, setStoryModal] = useState(false);
   const [timeline, setTimeline] = useState<ScheduleItem[]>([]);
-  const [mounted, setMounted] = useState(false);
+  const [syncing, setSyncing] = useState(false);
+
+  const [gmatSection, setGmatSection] =
+    useState<"Quant" | "Verbal" | "Data Insights">("Quant");
+  const [gmatQuestions, setGmatQuestions] = useState(20);
+  const [gmatCorrect, setGmatCorrect] = useState(15);
+  const [gmatMinutes, setGmatMinutes] = useState(45);
+  const [mockScore, setMockScore] = useState(705);
+  const [mockDate, setMockDate] = useState(localDate());
 
   useEffect(() => {
-    const savedTasks = localStorage.getItem("financeos.tasks");
-    const savedStories = localStorage.getItem("financeos.stories");
     const savedIb = localStorage.getItem("financeos.ib");
-    const savedTimeline = localStorage.getItem(`financeos.timeline.${localDate()}`);
+    const savedTimeline = localStorage.getItem(
+      `financeos.timeline.${localDate()}`
+    );
 
-    if (savedTasks) setTasks(JSON.parse(savedTasks));
-    if (savedStories) setStories(JSON.parse(savedStories));
     if (savedIb) setIbMode(JSON.parse(savedIb));
     if (savedTimeline) setTimeline(JSON.parse(savedTimeline));
 
-    setMounted(true);
+    supabase.auth.getUser().then(({ data }) => {
+      setUser(data.user);
+      setAuthReady(true);
+    });
+
+    const { data: listener } = supabase.auth.onAuthStateChange((_event, session) => {
+      setUser(session?.user ?? null);
+      setAuthReady(true);
+    });
+
+    return () => listener.subscription.unsubscribe();
   }, []);
 
   useEffect(() => {
-    if (mounted) localStorage.setItem("financeos.tasks", JSON.stringify(tasks));
-  }, [tasks, mounted]);
+    localStorage.setItem("financeos.ib", JSON.stringify(ibMode));
+  }, [ibMode]);
 
   useEffect(() => {
-    if (mounted) localStorage.setItem("financeos.stories", JSON.stringify(stories));
-  }, [stories, mounted]);
+    if (!user) {
+      setTasks([]);
+      setGmatSessions([]);
+      setGmatMocks([]);
+      setStories(starterStories);
+      return;
+    }
 
-  useEffect(() => {
-    if (mounted) localStorage.setItem("financeos.ib", JSON.stringify(ibMode));
-  }, [ibMode, mounted]);
+    loadCloudData(user);
+  }, [user]);
+
+  async function loadCloudData(activeUser: User) {
+    setSyncing(true);
+
+    try {
+      await migrateLocalDataOnce(activeUser);
+
+      const [tasksResult, storiesResult, gmatResult, mocksResult] =
+        await Promise.all([
+          supabase
+            .from("tasks")
+            .select("*")
+            .eq("user_id", activeUser.id)
+            .order("task_date", { ascending: true })
+            .order("created_at", { ascending: true }),
+
+          supabase
+            .from("finance_stories")
+            .select("*")
+            .eq("user_id", activeUser.id)
+            .order("story_date", { ascending: false })
+            .order("created_at", { ascending: false }),
+
+          supabase
+            .from("gmat_sessions")
+            .select("*")
+            .eq("user_id", activeUser.id)
+            .order("session_date", { ascending: false })
+            .order("created_at", { ascending: false }),
+
+          supabase
+            .from("gmat_mocks")
+            .select("*")
+            .eq("user_id", activeUser.id)
+            .order("mock_date", { ascending: false })
+        ]);
+
+      const firstError =
+        tasksResult.error ||
+        storiesResult.error ||
+        gmatResult.error ||
+        mocksResult.error;
+
+      if (firstError) throw firstError;
+
+      setTasks((tasksResult.data ?? []).map(dbTaskToTask));
+
+      const cloudStories = (storiesResult.data ?? []).map(dbStoryToStory);
+      setStories(cloudStories.length ? cloudStories : starterStories);
+
+      setGmatSessions(
+        (gmatResult.data ?? []).map((row: any) => ({
+          id: row.id,
+          date: row.session_date,
+          section: row.section,
+          questions: row.questions,
+          correct: row.correct,
+          minutes: row.minutes
+        }))
+      );
+
+      setGmatMocks(
+        (mocksResult.data ?? []).map((row: any) => ({
+          id: row.id,
+          date: row.mock_date,
+          score: row.total_score
+        }))
+      );
+    } catch (error: any) {
+      console.error(error);
+      setAuthError(error.message ?? "Could not load cloud data.");
+    } finally {
+      setSyncing(false);
+    }
+  }
+
+  async function migrateLocalDataOnce(activeUser: User) {
+    const key = `financeos.cloudMigrated.${activeUser.id}`;
+    if (localStorage.getItem(key)) return;
+
+    const localTasksRaw = localStorage.getItem("financeos.tasks");
+    const localStoriesRaw = localStorage.getItem("financeos.stories");
+
+    const localTasks: Task[] = localTasksRaw ? JSON.parse(localTasksRaw) : [];
+    const localStories: Story[] = localStoriesRaw ? JSON.parse(localStoriesRaw) : [];
+
+    if (localTasks.length) {
+      const rows = localTasks.map((task) => ({
+        user_id: activeUser.id,
+        title: task.title,
+        category: task.category,
+        task_date: task.date,
+        minutes: task.mins,
+        priority: task.priority,
+        completed: task.done
+      }));
+
+      const { error } = await supabase.from("tasks").insert(rows);
+      if (error) throw error;
+    }
+
+    const starterIds = new Set([
+      ...starterStories.map((story) => story.id),
+      "m1",
+      "d1",
+      "c1",
+      "p1"
+    ]);
+    const userStories = localStories.filter((story) => !starterIds.has(story.id));
+
+    if (userStories.length) {
+      const rows = userStories.map((story) => ({
+        user_id: activeUser.id,
+        category: story.cat,
+        relevance: story.score,
+        headline: story.h,
+        summary: story.summary,
+        why_it_matters: story.why,
+        deep_dive: story.deep,
+        source_label: story.source,
+        source_url: story.link || null,
+        story_date: localDate()
+      }));
+
+      const { error } = await supabase.from("finance_stories").insert(rows);
+      if (error) throw error;
+    }
+
+    localStorage.setItem(key, "true");
+  }
+
+  async function handleAuth(
+    event: FormEvent<HTMLFormElement>,
+    email: string,
+    password: string
+  ) {
+    event.preventDefault();
+    setAuthError("");
+    setAuthMessage("");
+
+    if (authMode === "signup") {
+      const { data, error } = await supabase.auth.signUp({
+        email,
+        password,
+        options: {
+          emailRedirectTo: window.location.origin
+        }
+      });
+
+      if (error) {
+        setAuthError(error.message);
+        return;
+      }
+
+      if (!data.session) {
+        setAuthMessage(
+          "Account created. Check your email for the Supabase confirmation link, then come back and sign in."
+        );
+      } else {
+        setAuthMessage("Account created and signed in.");
+      }
+      return;
+    }
+
+    const { error } = await supabase.auth.signInWithPassword({
+      email,
+      password
+    });
+
+    if (error) setAuthError(error.message);
+  }
+
+  async function signOut() {
+    await supabase.auth.signOut();
+    setTab("dashboard");
+  }
 
   const todayTasks = tasks
-    .filter((t) => t.date === localDate())
+    .filter((task) => task.date === localDate())
     .sort((a, b) => b.priority - a.priority);
 
-  const completed = todayTasks.filter((t) => t.done).length;
+  const completed = todayTasks.filter((task) => task.done).length;
   const completion = todayTasks.length
     ? Math.round((completed / todayTasks.length) * 100)
     : 0;
 
   const upcoming = assessments
-    .map((a) => ({
-      name: a[0],
-      sub: a[1],
-      date: a[2],
-      weight: a[3],
-      days: daysUntil(a[2])
+    .map((assessment) => ({
+      name: assessment[0],
+      sub: assessment[1],
+      date: assessment[2],
+      weight: assessment[3],
+      days: daysUntil(assessment[2])
     }))
-    .filter((a) => a.days >= 0)
+    .filter((assessment) => assessment.days >= 0)
     .sort((a, b) => a.days - b.days);
 
   const sortedStories = [...stories].sort((a, b) => b.score - a.score);
 
-  function ensureTask(
+  const gmatStats = useMemo(() => {
+    const stats: Record<string, { questions: number; correct: number }> = {
+      Quant: { questions: 0, correct: 0 },
+      Verbal: { questions: 0, correct: 0 },
+      "Data Insights": { questions: 0, correct: 0 }
+    };
+
+    for (const session of gmatSessions) {
+      stats[session.section].questions += session.questions;
+      stats[session.section].correct += session.correct;
+    }
+
+    return stats;
+  }, [gmatSessions]);
+
+  function accuracy(section: string) {
+    const stat = gmatStats[section];
+    if (!stat.questions) return "—";
+    return `${Math.round((stat.correct / stat.questions) * 100)}%`;
+  }
+
+  async function addTask(task: Omit<Task, "id">) {
+    if (!user) return;
+
+    const { data, error } = await supabase
+      .from("tasks")
+      .insert({
+        user_id: user.id,
+        title: task.title,
+        category: task.category,
+        task_date: task.date,
+        minutes: task.mins,
+        priority: task.priority,
+        completed: task.done
+      })
+      .select()
+      .single();
+
+    if (error) {
+      setAuthError(error.message);
+      return;
+    }
+
+    setTasks((prev) => [...prev, dbTaskToTask(data)]);
+  }
+
+  async function toggleTask(task: Task) {
+    if (!user) return;
+
+    const nextDone = !task.done;
+    setTasks((prev) =>
+      prev.map((item) =>
+        item.id === task.id ? { ...item, done: nextDone } : item
+      )
+    );
+
+    const { error } = await supabase
+      .from("tasks")
+      .update({ completed: nextDone })
+      .eq("id", task.id)
+      .eq("user_id", user.id);
+
+    if (error) {
+      setAuthError(error.message);
+      setTasks((prev) =>
+        prev.map((item) =>
+          item.id === task.id ? { ...item, done: task.done } : item
+        )
+      );
+    }
+  }
+
+  async function ensureTask(
     title: string,
     category: string,
     mins: number,
     priority: number
   ) {
-    const date = localDate();
+    const exists = tasks.some(
+      (task) => task.date === localDate() && task.title === title
+    );
 
-    setTasks((prev) => {
-      if (prev.some((t) => t.date === date && t.title === title)) return prev;
+    if (exists) return;
 
-      return [
-        ...prev,
-        {
-          id: crypto.randomUUID(),
-          title,
-          category,
-          date,
-          mins,
-          priority,
-          done: false
-        }
-      ];
+    await addTask({
+      title,
+      category,
+      date: localDate(),
+      mins,
+      priority,
+      done: false
     });
   }
 
-  function planMyDay() {
+  async function addStory(story: Omit<Story, "id">) {
+    if (!user) return;
+
+    const { data, error } = await supabase
+      .from("finance_stories")
+      .insert({
+        user_id: user.id,
+        category: story.cat,
+        relevance: story.score,
+        headline: story.h,
+        summary: story.summary,
+        why_it_matters: story.why,
+        deep_dive: story.deep,
+        source_label: story.source,
+        source_url: story.link || null,
+        story_date: localDate()
+      })
+      .select()
+      .single();
+
+    if (error) {
+      setAuthError(error.message);
+      return;
+    }
+
+    const saved = dbStoryToStory(data);
+    setStories((prev) => {
+      const realStories = prev.filter(
+        (item) => !item.id.startsWith("starter-")
+      );
+      return [saved, ...realStories];
+    });
+  }
+
+  async function logGmatSession() {
+    if (!user) return;
+
+    const { data, error } = await supabase
+      .from("gmat_sessions")
+      .insert({
+        user_id: user.id,
+        session_date: localDate(),
+        section: gmatSection,
+        questions: gmatQuestions,
+        correct: gmatCorrect,
+        minutes: gmatMinutes
+      })
+      .select()
+      .single();
+
+    if (error) {
+      setAuthError(error.message);
+      return;
+    }
+
+    setGmatSessions((prev) => [
+      {
+        id: data.id,
+        date: data.session_date,
+        section: data.section,
+        questions: data.questions,
+        correct: data.correct,
+        minutes: data.minutes
+      },
+      ...prev
+    ]);
+  }
+
+  async function addMock() {
+    if (!user) return;
+
+    const { data, error } = await supabase
+      .from("gmat_mocks")
+      .insert({
+        user_id: user.id,
+        mock_date: mockDate,
+        total_score: mockScore
+      })
+      .select()
+      .single();
+
+    if (error) {
+      setAuthError(error.message);
+      return;
+    }
+
+    setGmatMocks((prev) => [
+      { id: data.id, date: data.mock_date, score: data.total_score },
+      ...prev
+    ]);
+  }
+
+  async function planMyDay() {
     const dow = melbourneDayOfWeek();
     const schedule: ScheduleItem[] = [];
 
@@ -292,7 +702,7 @@ export default function Home() {
 
     if (ibMode) {
       schedule.push(["08:00", "09:30", "IB technical + behavioural prep", "ib"]);
-      ensureTask("IB technical interview prep", "IB Prep", 90, 5);
+      await ensureTask("IB technical interview prep", "IB Prep", 90, 5);
     }
 
     (classes[dow] || []).forEach((item) => schedule.push(item));
@@ -353,7 +763,7 @@ export default function Home() {
       );
     }
 
-    ensureTask("GMAT focused practice", "GMAT", 60, 4);
+    await ensureTask("GMAT focused practice", "GMAT", 60, 4);
 
     setTimeline(schedule);
     localStorage.setItem(
@@ -361,6 +771,29 @@ export default function Home() {
       JSON.stringify(schedule)
     );
     setTab("dashboard");
+  }
+
+  if (!authReady) {
+    return (
+      <div className="authShell">
+        <div className="authCard">
+          <div className="brand">Henrik <span>Finance OS</span></div>
+          <div className="sub">Connecting securely to Supabase…</div>
+        </div>
+      </div>
+    );
+  }
+
+  if (!user) {
+    return (
+      <AuthScreen
+        mode={authMode}
+        setMode={setAuthMode}
+        message={authMessage}
+        error={authError}
+        onSubmit={handleAuth}
+      />
+    );
   }
 
   return (
@@ -385,6 +818,23 @@ export default function Home() {
           ))}
         </nav>
 
+        <div className="userChip">
+          <div className="syncBadge">
+            <span className="syncDot" />
+            {syncing ? "Syncing…" : "Cloud synced"}
+          </div>
+          <div className="small" style={{ marginTop: 5 }}>
+            {user.email}
+          </div>
+          <button
+            className="btn"
+            style={{ width: "100%", marginTop: 9 }}
+            onClick={signOut}
+          >
+            Sign out
+          </button>
+        </div>
+
         <div className="mode">
           <div className="k">Priority 0</div>
           <div className="title" style={{ marginTop: 5 }}>
@@ -404,11 +854,25 @@ export default function Home() {
       </aside>
 
       <main className="main">
+        {authError && (
+          <div className="errorBox">
+            {authError}
+            <button
+              className="btn"
+              style={{ marginLeft: 10, padding: "5px 8px" }}
+              onClick={() => setAuthError("")}
+            >
+              Dismiss
+            </button>
+          </div>
+        )}
+
         {tab === "dashboard" && (
           <section>
             <div className="installNote">
-              PWA-ready: once deployed on Vercel, open it in Safari on iPhone,
-              tap Share, then Add to Home Screen.
+              Cloud sync is active. Sign into the same account on your Mac and
+              iPhone and your tasks, GMAT data and saved finance stories will
+              follow you.
             </div>
 
             <div className="top">
@@ -487,15 +951,7 @@ export default function Home() {
                     >
                       <button
                         className="check"
-                        onClick={() =>
-                          setTasks(
-                            tasks.map((item) =>
-                              item.id === task.id
-                                ? { ...item, done: !item.done }
-                                : item
-                            )
-                          )
-                        }
+                        onClick={() => toggleTask(task)}
                       >
                         {task.done ? "✓" : ""}
                       </button>
@@ -525,7 +981,10 @@ export default function Home() {
                     )}
 
                     {timeline.map((item, index) => (
-                      <div key={`${item[0]}-${item[2]}-${index}`} style={{ display: "contents" }}>
+                      <div
+                        key={`${item[0]}-${item[2]}-${index}`}
+                        style={{ display: "contents" }}
+                      >
                         <div className="time">{item[0]}</div>
                         <div className={`slot ${item[3]}`}>
                           <strong>{item[2]}</strong>
@@ -635,20 +1094,150 @@ export default function Home() {
             </div>
 
             <div className="grid grid3">
-              <Metric title="Target" value="750+" />
+              <Metric title="Quant accuracy" value={accuracy("Quant")} />
+              <Metric title="Verbal accuracy" value={accuracy("Verbal")} />
               <Metric
-                title="Countdown"
-                value={`${Math.max(0, daysUntil("2026-11-15"))} days`}
+                title="Data Insights accuracy"
+                value={accuracy("Data Insights")}
               />
-              <Metric title="Sync status" value="Local" sub="Supabase next" />
+            </div>
+
+            <div className="grid grid2 section">
+              <div className="card">
+                <div className="section-head">
+                  <h2>Log practice</h2>
+                </div>
+
+                <div className="gmatForm">
+                  <div>
+                    <label className="small">Section</label>
+                    <select
+                      value={gmatSection}
+                      onChange={(event) =>
+                        setGmatSection(
+                          event.target.value as
+                            | "Quant"
+                            | "Verbal"
+                            | "Data Insights"
+                        )
+                      }
+                    >
+                      <option>Quant</option>
+                      <option>Verbal</option>
+                      <option>Data Insights</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="small">Questions</label>
+                    <input
+                      type="number"
+                      value={gmatQuestions}
+                      onChange={(event) =>
+                        setGmatQuestions(Number(event.target.value))
+                      }
+                    />
+                  </div>
+
+                  <div>
+                    <label className="small">Correct</label>
+                    <input
+                      type="number"
+                      value={gmatCorrect}
+                      onChange={(event) =>
+                        setGmatCorrect(Number(event.target.value))
+                      }
+                    />
+                  </div>
+
+                  <div>
+                    <label className="small">Minutes</label>
+                    <input
+                      type="number"
+                      value={gmatMinutes}
+                      onChange={(event) =>
+                        setGmatMinutes(Number(event.target.value))
+                      }
+                    />
+                  </div>
+                </div>
+
+                <button
+                  className="btn primary"
+                  style={{ marginTop: 10 }}
+                  onClick={logGmatSession}
+                >
+                  Save session
+                </button>
+              </div>
+
+              <div className="card">
+                <div className="section-head">
+                  <h2>Mock score</h2>
+                </div>
+
+                <div className="formGrid">
+                  <div>
+                    <label className="small">Score</label>
+                    <input
+                      type="number"
+                      value={mockScore}
+                      onChange={(event) =>
+                        setMockScore(Number(event.target.value))
+                      }
+                    />
+                  </div>
+                  <div>
+                    <label className="small">Date</label>
+                    <input
+                      type="date"
+                      value={mockDate}
+                      onChange={(event) => setMockDate(event.target.value)}
+                    />
+                  </div>
+                </div>
+
+                <button
+                  className="btn"
+                  style={{ marginTop: 10 }}
+                  onClick={addMock}
+                >
+                  Save mock
+                </button>
+
+                <div style={{ marginTop: 12 }}>
+                  {gmatMocks.slice(0, 5).map((mock) => (
+                    <div className="assessment row" key={mock.id}>
+                      <span>{mock.date}</span>
+                      <strong>{mock.score}</strong>
+                    </div>
+                  ))}
+                </div>
+              </div>
             </div>
 
             <div className="card section">
-              <div className="metric-sm">Cloud GMAT tracking is next.</div>
-              <div className="small" style={{ marginTop: 8 }}>
-                We will move practice sessions, mocks and error logs into
-                Supabase so they sync between Mac and iPhone.
+              <div className="section-head">
+                <h2>Recent practice</h2>
               </div>
+
+              {gmatSessions.slice(0, 10).map((session) => (
+                <div className="assessment row" key={session.id}>
+                  <div>
+                    <strong>{session.section}</strong>
+                    <div className="small">
+                      {session.date} · {session.minutes} min
+                    </div>
+                  </div>
+                  <div>
+                    {session.correct}/{session.questions}
+                  </div>
+                </div>
+              ))}
+
+              {!gmatSessions.length && (
+                <div className="small">No sessions logged yet.</div>
+              )}
             </div>
           </section>
         )}
@@ -668,14 +1257,12 @@ export default function Home() {
             </div>
 
             <div className="card">
-              <div className="kicker">Live-feed status</div>
+              <div className="kicker">Cloud status</div>
               <div className="metric-sm" style={{ marginTop: 7 }}>
-                Frontend ready. Backend next.
+                Saved briefing stories now sync across devices.
               </div>
               <div className="small" style={{ marginTop: 7 }}>
-                After deployment, we will add a server-side briefing route that
-                pulls current RBA, ABS, ASX and reputable financial reporting,
-                deduplicates it and ranks the best 5–8 stories for Australian IB.
+                Live automated news ingestion is the next backend step.
               </div>
             </div>
 
@@ -711,7 +1298,7 @@ export default function Home() {
             <div className="top">
               <div>
                 <h1>Performance</h1>
-                <div className="muted">Current local metrics</div>
+                <div className="muted">Cloud-synced metrics</div>
               </div>
             </div>
 
@@ -722,10 +1309,13 @@ export default function Home() {
               />
               <Metric title="IB mode" value={ibMode ? "Active" : "Done"} />
               <Metric
-                title="Saved finance stories"
-                value={`${stories.length}`}
+                title="GMAT questions"
+                value={`${gmatSessions.reduce(
+                  (sum, session) => sum + session.questions,
+                  0
+                )}`}
               />
-              <Metric title="Data sync" value="Local" sub="Supabase next" />
+              <Metric title="Data sync" value="Supabase" sub="Mac ↔ iPhone" />
             </div>
           </section>
         )}
@@ -734,8 +1324,8 @@ export default function Home() {
       {taskModal && (
         <TaskModal
           onClose={() => setTaskModal(false)}
-          onSave={(task) => {
-            setTasks([...tasks, task]);
+          onSave={async (task) => {
+            await addTask(task);
             setTaskModal(false);
           }}
         />
@@ -744,12 +1334,100 @@ export default function Home() {
       {storyModal && (
         <StoryModal
           onClose={() => setStoryModal(false)}
-          onSave={(story) => {
-            setStories([...stories, story]);
+          onSave={async (story) => {
+            await addStory(story);
             setStoryModal(false);
           }}
         />
       )}
+    </div>
+  );
+}
+
+function AuthScreen({
+  mode,
+  setMode,
+  message,
+  error,
+  onSubmit
+}: {
+  mode: "signin" | "signup";
+  setMode: (mode: "signin" | "signup") => void;
+  message: string;
+  error: string;
+  onSubmit: (
+    event: FormEvent<HTMLFormElement>,
+    email: string,
+    password: string
+  ) => Promise<void>;
+}) {
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+
+  return (
+    <div className="authShell">
+      <div className="authCard">
+        <div className="brandLine">
+          <div className="brand">
+            Henrik <span>Finance OS</span>
+          </div>
+          <div className="sub">
+            Sign in once. Use the same account on Mac and iPhone.
+          </div>
+        </div>
+
+        <h1>{mode === "signin" ? "Sign in" : "Create account"}</h1>
+
+        {message && <div className="statusBox">{message}</div>}
+        {error && <div className="errorBox">{error}</div>}
+
+        <form
+          onSubmit={(event) => onSubmit(event, email.trim(), password)}
+          style={{ marginTop: 18 }}
+        >
+          <div>
+            <label className="small">Email</label>
+            <input
+              type="email"
+              autoComplete="email"
+              required
+              value={email}
+              onChange={(event) => setEmail(event.target.value)}
+            />
+          </div>
+
+          <div>
+            <label className="small">Password</label>
+            <input
+              type="password"
+              minLength={6}
+              autoComplete={
+                mode === "signin" ? "current-password" : "new-password"
+              }
+              required
+              value={password}
+              onChange={(event) => setPassword(event.target.value)}
+            />
+          </div>
+
+          <button className="btn primary" type="submit">
+            {mode === "signin" ? "Sign in" : "Create account"}
+          </button>
+        </form>
+
+        <div className="authSwitch">
+          <button
+            className="btn"
+            onClick={() =>
+              setMode(mode === "signin" ? "signup" : "signin")
+            }
+          >
+            {mode === "signin"
+              ? "Need an account? Create one"
+              : "Already have an account? Sign in"}
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
@@ -813,6 +1491,18 @@ function StoryCard({ story }: { story: Story }) {
         <div className="small" style={{ marginTop: 8 }}>
           {story.deep}
         </div>
+        {story.link && (
+          <div style={{ marginTop: 8 }}>
+            <a
+              href={story.link}
+              target="_blank"
+              rel="noreferrer"
+              style={{ color: "#93c5fd", fontSize: 12 }}
+            >
+              Open source ↗
+            </a>
+          </div>
+        )}
       </details>
     </div>
   );
@@ -823,7 +1513,7 @@ function TaskModal({
   onSave
 }: {
   onClose: () => void;
-  onSave: (task: Task) => void;
+  onSave: (task: Omit<Task, "id">) => Promise<void>;
 }) {
   const [title, setTitle] = useState("");
   const [category, setCategory] = useState("IB Prep");
@@ -905,7 +1595,6 @@ function TaskModal({
             onClick={() => {
               if (!title.trim()) return;
               onSave({
-                id: crypto.randomUUID(),
                 title: title.trim(),
                 category,
                 date,
@@ -928,7 +1617,7 @@ function StoryModal({
   onSave
 }: {
   onClose: () => void;
-  onSave: (story: Story) => void;
+  onSave: (story: Omit<Story, "id">) => Promise<void>;
 }) {
   const [headline, setHeadline] = useState("");
   const [category, setCategory] = useState("M&A");
@@ -937,6 +1626,7 @@ function StoryModal({
   const [why, setWhy] = useState("");
   const [deep, setDeep] = useState("");
   const [source, setSource] = useState("ASX");
+  const [link, setLink] = useState("");
 
   return (
     <div className="modalWrap">
@@ -1011,6 +1701,14 @@ function StoryModal({
               onChange={(event) => setSource(event.target.value)}
             />
           </div>
+
+          <div>
+            <label className="small">Source link</label>
+            <input
+              value={link}
+              onChange={(event) => setLink(event.target.value)}
+            />
+          </div>
         </div>
 
         <div
@@ -1025,14 +1723,14 @@ function StoryModal({
             onClick={() => {
               if (!headline.trim()) return;
               onSave({
-                id: crypto.randomUUID(),
                 cat: category,
                 score,
                 h: headline.trim(),
                 summary,
                 why,
                 deep,
-                source
+                source,
+                link
               });
             }}
           >

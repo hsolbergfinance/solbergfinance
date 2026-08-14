@@ -1,58 +1,42 @@
-# SolbergFinance / Henrik Finance OS
+# SolbergFinance — Cloud Sync Update
 
-This is the Next.js App Router + PWA migration of the Finance OS prototype.
+This version adds Supabase authentication and cloud sync to the Next.js/PWA app.
 
-## Current features
+## Added
+- Email/password Supabase authentication
+- Cloud-synced tasks
+- Cloud-synced GMAT practice sessions
+- Cloud-synced GMAT mock scores
+- Cloud-synced saved finance stories
+- Automatic one-time migration of existing browser tasks/user-created stories
+- Existing Plan My Day, university assessment dashboard and PWA behaviour retained
 
-- Responsive desktop and phone UI
-- Installable PWA structure
-- Your class timetable
-- Plan My Day
-- 35-minute commute assumption
-- IB Interview Mode as Priority 0
-- University assessment dates/weights
-- GMAT 750+ countdown
-- Finance briefing UI
-- Local browser persistence for tasks/settings/stories
-- Supabase starter schema for the next step
+## Required environment variables
+These should already exist in Vercel:
 
-## Local development
+NEXT_PUBLIC_SUPABASE_URL
+NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY
 
-```bash
-npm install
-npm run dev
-```
+## Supabase tables
+This version uses the tables already created by `supabase/schema.sql`:
+- tasks
+- gmat_sessions
+- gmat_mocks
+- finance_stories
 
-Open http://localhost:3000.
+## Deployment
+Upload/commit these files to the root of GitHub repository `solbergfinance`.
+Vercel should automatically create a new deployment.
 
-## Build test
+## First login
+1. Open the newly deployed app.
+2. Choose "Need an account? Create one".
+3. Use your email and a new app password.
+4. If Supabase email confirmation is enabled, click the confirmation link in the email.
+5. Sign in on both Mac and iPhone with the same account.
 
-```bash
-npm run build
-```
-
-## GitHub
-
-Upload this project's **contents** to the root of the `solbergfinance` repository.
-
-## Vercel
-
-Once GitHub contains the project:
-
-1. Vercel → Add New → Project
-2. Import `solbergfinance`
-3. Framework should auto-detect as Next.js
-4. Leave root directory as `.`
-5. Deploy
-
-## Next step: Supabase
-
-Do not add secrets to GitHub.
-
-After the first deployment, we will:
-1. create the Supabase project,
-2. run `supabase/schema.sql`,
-3. add Supabase environment variables to Vercel,
-4. move localStorage data to cloud sync,
-5. add authentication,
-6. add the live Australian finance/M&A briefing backend.
+## Next development step
+- Sync daily plans/preferences
+- Add live Australian macro/M&A backend
+- Scheduled morning briefing
+- Push notifications
